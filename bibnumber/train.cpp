@@ -3,9 +3,18 @@
 #include <ctime>
 #include <cstdlib>
 
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/ml/ml.hpp>
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
-#include <opencv2/ml/ml.hpp>
+#include <opencv/cxcore.h>
+#include <opencv/cv.hpp>
+#include <opencv/cvaux.hpp>
+#include <opencv/cxcore.hpp>
+#include <opencv/cvwimage.h>
+#include <opencv/cxmisc.h>
+#include <opencv/ml.h>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -14,30 +23,6 @@
 #include "batch.h"
 
 namespace fs = boost::filesystem;
-
-class LinearSVM: public CvSVM {
-public:
-	void getSupportVector(std::vector<float>& support_vector) const;
-};
-
-void LinearSVM::getSupportVector(std::vector<float>& support_vector) const {
-
-	int sv_count = get_support_vector_count();
-	const CvSVMDecisionFunc* df = decision_func;
-	const double* alphas = df[0].alpha;
-	double rho = df[0].rho;
-	int var_count = get_var_count();
-	support_vector.resize(var_count, 0);
-	for (unsigned int r = 0; r < (unsigned) sv_count; r++) {
-		float myalpha = alphas[r];
-		const float* v = get_support_vector(r);
-		for (int j = 0; j < var_count; j++, v++) {
-			support_vector[j] += (-myalpha) * (*v);
-		}
-	}
-	support_vector.push_back(rho);
-}
-
 
 /**
  * Compute HOG feature descriptor from input image
@@ -364,14 +349,13 @@ int process(std::string trainDir, std::string inputDir) {
 	cv::Mat labels(rows, 1, CV_32FC1, cv::Scalar(-1.0));
 	labels.rowRange(0, nPositives) = cv::Scalar(1.0);
 
-	LinearSVM svm;
-	CvSVMParams params;
-	params.svm_type = CvSVM::C_SVC;
-	params.kernel_type = CvSVM::LINEAR;
-	params.term_crit = cvTermCriteria( CV_TERMCRIT_ITER, 10000, 1e-6);
+	cv::Ptr<cv::ml::SVM> svm = cv::ml::SVM::create();
+	svm->setKernel( cv::ml::SVM::LINEAR );
+	svm->setTermCriteria( cv::TermCriteria( CV_TERMCRIT_ITER, 1000, 1e-6 ) );
+	svm->setType(cv::ml::SVM::C_SVC);
 
-	svm.train(trainingData, labels, cv::Mat(), cv::Mat(), params);
-	svm.save("svm.xml");
+	svm->train(trainingData, cv::ml::ROW_SAMPLE, labels);
+	svm->save("svm.xml");
 
 	for (unsigned int i = 0; i < rows; i++) {
 		/* show measure of distance to average positive feature */
@@ -380,7 +364,7 @@ int process(std::string trainDir, std::string inputDir) {
 		{
 			distance += square(trainingData.at<float>(i,j) - aggregateDescriptor.at<float>(0,j));
 		}
-		float prediction = svm.predict(trainingData.row(i));
+		float prediction = svm->predict(trainingData.row(i));
 		std::cout << i << " dist=" << distance <<" prediction=" << prediction << std::endl;
 	}
 
@@ -394,7 +378,7 @@ int process(std::string trainDir, std::string inputDir) {
 		cv::Rect roi = cv::Rect(cv::Point(x, y), hog.winSize);
 		std::cout << "Sampling random patch from " << roi << std::endl;
 		hog.compute(imageMat(roi), descriptor);
-		float prediction = svm.predict(cv::Mat(descriptor).t());
+		float prediction = svm->predict(cv::Mat(descriptor).t());
 		std::cout << i << " prediction=" << prediction << std::endl;
 		if (prediction > 0.5) {
 			char *filename;
@@ -409,10 +393,23 @@ int process(std::string trainDir, std::string inputDir) {
 		std::cout << "Opening full image " << fullImgFiles[0].string()
 		<< std::endl;
 		cv::Mat imageMat = cv::imread(fullImgFiles[0].string().c_str(), 1);
-		std::vector<float> support_vector;
-		svm.getSupportVector(support_vector);
+		std::vector<float> hog_detector;
+
+		// get the support vectors
+        Mat sv = svm->getSupportVectors();
+        const int sv_total = sv.rows;
+        // get the decision function
+        Mat alpha, svidx;
+        double rho = svm->getDecisionFunction( 0, alpha, svidx );
+
+        hog_detector.clear();
+
+        hog_detector.resize(sv.cols + 1);
+        memcpy( &hog_detector[0], sv.ptr(), sv.cols*sizeof( hog_detector[0] ) );
+        hog_detector[sv.cols] = (float)-rho;
+
 		std::vector<cv::Rect> locations;
-		hog.setSVMDetector(support_vector);
+		hog.setSVMDetector(hog_detector);
 		hog.detectMultiScale(imageMat, locations, 0.0, cv::Size(), cv::Size(), 1.01);
 		for (unsigned int i = 0; i < locations.size(); ++i) {
 			cv::rectangle(imageMat, locations[i], cv::Scalar(64, 255, 64), 3);
@@ -436,7 +433,7 @@ int process(std::string trainDir, std::string inputDir) {
 			std::cout << "Sampling random patch from " << roi
 					<< std::endl;
 			hog.compute(imageMat(roi), descriptor);
-			float prediction = svm.predict(cv::Mat(descriptor).t());
+			float prediction = svm->predict(cv::Mat(descriptor).t());
 			if (prediction > 0.5) {
 				std::cout << "detection!" << std::endl;
 				cv::rectangle(imageMat, roi, cv::Scalar(64, 255, 64),

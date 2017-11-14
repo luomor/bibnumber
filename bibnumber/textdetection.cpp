@@ -27,9 +27,17 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/core/core.hpp>
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 #include <opencv/cxcore.h>
+#include <opencv/cv.hpp>
+#include <opencv/cvaux.hpp>
+#include <opencv/cxcore.hpp>
+#include <opencv/cvwimage.h>
+#include <opencv/cxmisc.h>
+#include <opencv/ml.h>
 #include <math.h>
 #include <time.h>
 #include <utility>
@@ -226,7 +234,7 @@ void renderComponentsWithBoxes(IplImage * SWTImage,
 
 		char *txt;
 		asprintf(&txt, "%d", count);
-		cv::Mat tmp_mat = cv::Mat(output);
+		cv::Mat tmp_mat = cv::cvarrToMat(output);
 		cv::rectangle(tmp_mat, it->first, it->second, c);
 		cv::putText(tmp_mat, txt, it->first, cv::FONT_HERSHEY_SIMPLEX, 0.3, c);
 		free(txt);
